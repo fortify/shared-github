@@ -1,0 +1,93 @@
+name: actions/setup-dotnet (wrapped) v5
+description: >-
+  Composite wrapper for actions/setup-dotnet pinned to
+  26b0ec14cb23fa6904739307f278c14f94c95bf1
+inputs:
+  dotnet-version:
+    description: >-
+      Optional SDK version(s) to use. If not provided, will install global.json
+      version when available. Examples: 2.2.104, 3.1, 3.1.x, 3.x, 6.0.2xx,
+      latest
+    required: false
+  dotnet-quality:
+    description: >-
+      Optional quality of the build. The possible values are: daily, preview,
+      ga.
+    required: false
+  dotnet-channel:
+    description: >-
+      Optional channel for the installation. The possible values are: STS, LTS,
+      A.B (e.g. 8.0), A.B.Cxx (e.g. 8.0.1xx, available since 5.0). To be used
+      with "dotnet-version: latest".
+    required: false
+  global-json-file:
+    description: >-
+      Optional global.json location, if your global.json isn't located in the
+      root of the repo.
+    required: false
+  source-url:
+    description: >-
+      Optional package source for which to set up authentication. Will consult
+      any existing NuGet.config in the root of the repo and provide a temporary
+      NuGet.config using the NUGET_AUTH_TOKEN environment variable as a
+      ClearTextPassword
+    required: false
+  owner:
+    description: >-
+      Optional OWNER for using packages from GitHub Package Registry
+      organizations/users other than the current repository's owner. Only used
+      if a GPR URL is also provided in source-url
+    required: false
+  config-file:
+    description: >-
+      Optional NuGet.config location, if your NuGet.config isn't located in the
+      root of the repo.
+    required: false
+  cache:
+    description: Optional input to enable caching of the NuGet global-packages folder
+    required: false
+    default: false
+  cache-dependency-path:
+    description: >-
+      Used to specify the path to a dependency file: packages.lock.json.
+      Supports wildcards or a list of file names for caching multiple
+      dependencies.
+    required: false
+  workloads:
+    description: >-
+      Optional SDK workloads to install for additional platform support.
+      Examples: wasm-tools, maui, aspire.
+    required: false
+  architecture:
+    description: >-
+      Optional architecture for the .NET install. Supported values: x64, x86,
+      arm64, amd64, arm, s390x, ppc64le, riscv64. If not set, the installer
+      auto-detects the current system architecture.
+    required: false
+outputs:
+  cache-hit:
+    description: A boolean value to indicate if a cache was hit.
+    value: ${{ steps.upstream.outputs.cache-hit }}
+  dotnet-version:
+    description: Contains the installed by action .NET SDK version for reuse.
+    value: ${{ steps.upstream.outputs.dotnet-version }}
+  all_upstream_outputs:
+    description: All outputs from upstream step as JSON
+    value: ${{ toJSON(steps.upstream.outputs) }}
+runs:
+  using: composite
+  steps:
+    - id: upstream
+      uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+      with:
+        dotnet-version: ${{ inputs.dotnet-version }}
+        dotnet-quality: ${{ inputs.dotnet-quality }}
+        dotnet-channel: ${{ inputs.dotnet-channel }}
+        global-json-file: ${{ inputs.global-json-file }}
+        source-url: ${{ inputs.source-url }}
+        owner: ${{ inputs.owner }}
+        config-file: ${{ inputs.config-file }}
+        cache: ${{ inputs.cache }}
+        cache-dependency-path: ${{ inputs.cache-dependency-path }}
+        workloads: ${{ inputs.workloads }}
+        architecture: ${{ inputs.architecture }}
