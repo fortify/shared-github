@@ -61,24 +61,24 @@ jobs:
 
     steps:
       - name: Check Out Source Code
-        uses: actions/checkout@v6
+        uses: $/actions/3rdparty/actions/checkout/v6
 
       - name: Setup Java
         if: inputs.java-version != ''
-        uses: actions/setup-java@v5
+        uses: $/actions/3rdparty/actions/setup-java/v5
         with:
           distribution: 'temurin'
           java-version: ${{ inputs.java-version }}
 
       - name: Setup Node.js
         if: inputs.node-version != ''
-        uses: actions/setup-node@v6
+        uses: $/actions/3rdparty/actions/setup-node/v6
         with:
           node-version: ${{ inputs.node-version }}
 
       - name: Setup .NET
         if: inputs.dotnet-version != ''
-        uses: actions/setup-dotnet@v5
+        uses: $/actions/3rdparty/actions/setup-dotnet/v5
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
 
