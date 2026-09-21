@@ -1,7 +1,7 @@
-name: actions/checkout (wrapped) v4
+name: actions/checkout (wrapped) v6
 description: >-
   Composite wrapper for actions/checkout pinned to
-  11d5960a326750d5838078e36cf38b85af677262
+  d23441a48e516b6c34aea4fa41551a30e30af803
 inputs:
   repository:
     description: Repository name with owner. For example, actions/checkout
@@ -155,7 +155,7 @@ runs:
   using: composite
   steps:
     - id: upstream
-      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       with:
         repository: ${{ inputs.repository }}
         ref: ${{ inputs.ref }}
