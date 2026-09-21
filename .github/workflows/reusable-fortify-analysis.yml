@@ -83,7 +83,7 @@ jobs:
           dotnet-version: ${{ inputs.dotnet-version }}
 
       - name: Run FoD SAST scan
-        uses: fortify/github-action@v3
+        uses: $/actions/3rdparty/fortify/github-action/v3
         env:
           FOD_URL: https://ams.fortify.com/
           FOD_TENANT: ${{secrets.OSS_FOD_TENANT}}
