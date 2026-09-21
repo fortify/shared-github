@@ -9,6 +9,9 @@ jobs:
     permissions:
       contents: write
       actions: read
+    env:
+      # Where scripts/generate.js writes composite wrapper actions, relative to the repo root.
+      OUTPUT_DIR: actions/3rdparty
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -22,7 +25,7 @@ jobs:
         run: npm ci
 
       - name: Remove existing wrapper actions
-        run: rm -rf actions
+        run: rm -rf "$OUTPUT_DIR"
 
       - name: Run generator
         env:
@@ -32,17 +35,40 @@ jobs:
           GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
         run: node ./scripts/generate.js
 
-      - name: Commit & push changes
+      - name: Verify generated diff stays within ${{ env.OUTPUT_DIR }}/**
+        run: |
+          out_of_scope=$(git status --porcelain | awk '{print $2}' | grep -v "^${OUTPUT_DIR}/" || true)
+          if [ -n "$out_of_scope" ]; then
+            echo "::error::Generator touched files outside ${OUTPUT_DIR}/**:"
+            echo "$out_of_scope"
+            exit 1
+          fi
+
+      - name: Commit changes to branch
         env:
-          GIT_AUTHOR_NAME: github-actions
-          GIT_AUTHOR_EMAIL: github-actions@users.noreply.github.com
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: github-actions[bot]@users.noreply.github.com
         run: |
           git config user.name "$GIT_AUTHOR_NAME"
           git config user.email "$GIT_AUTHOR_EMAIL"
+          git checkout -b "chore/update-generated-actions-${{ github.run_id }}"
           git add -A
           if git diff --cached --quiet; then
-            echo "No changes to commit"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else
             git commit -m "chore: update generated composite actions"
-            git push origin HEAD:main
+            git push origin "HEAD:chore/update-generated-actions-${{ github.run_id }}"
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
+        id: commit
+
+      - name: Open pull request
+        if: steps.commit.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr create \
+            --title "chore: update generated composite actions" \
+            --body "Automated regeneration of wrapper actions from the org allow-list. Review the diff for any unexpected upstream/ref changes before merging." \
+            --base main \
+            --head "chore/update-generated-actions-${{ github.run_id }}"

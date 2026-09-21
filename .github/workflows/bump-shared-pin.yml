@@ -1,0 +1,64 @@
+name: Bump shared-github pin
+on:
+  workflow_call:
+    inputs:
+      shared-repo:
+        description: 'owner/repo of the shared-github repo to pin to'
+        type: string
+        default: fortify/shared-github
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve latest shared-github main SHA
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(gh api "repos/${{ inputs.shared-repo }}/commits/main" --jq .sha)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Update pinned SHA references
+        id: update
+        run: |
+          repo="${{ inputs.shared-repo }}"
+          new_sha="${{ steps.latest.outputs.sha }}"
+          changed=0
+          while IFS= read -r -d '' f; do
+            if grep -qE "${repo}/[^@[:space:]]+@[0-9a-f]{40}" "$f"; then
+              sed -i -E "s#(${repo}/[^@[:space:]]+@)[0-9a-f]{40}#\1${new_sha}#g" "$f"
+              changed=1
+            fi
+          done < <(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print0)
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "sha=$new_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Open pull request
+        if: steps.update.outputs.changed == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          new_sha="${{ steps.update.outputs.sha }}"
+          branch="chore/bump-shared-github-${new_sha}"
+          if git diff --quiet; then
+            echo "No pin changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit -am "chore: bump shared-github pin to ${new_sha}"
+          git push origin "HEAD:${branch}"
+          if gh pr list --head "$branch" --state open --json number --jq 'length' | grep -qx 0; then
+            gh pr create \
+              --title "chore: bump shared-github pin to ${new_sha}" \
+              --body "Updates all ${{ inputs.shared-repo }} references to the latest reviewed commit on main." \
+              --base main \
+              --head "$branch"
+          fi

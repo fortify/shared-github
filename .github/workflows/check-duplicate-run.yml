@@ -1,0 +1,38 @@
+# Reusable workflow that detects whether a push-triggered run is redundant
+# because an open PR already exists for the branch (which triggers its own run).
+# Callers should gate their real jobs on: needs.check-duplicate-run.outputs.should_skip != 'true'
+
+name: Check for duplicate run
+
+on:
+  workflow_call:
+    outputs:
+      should_skip:
+        description: '"true" if the run should be skipped, empty or "false" otherwise'
+        value: ${{ jobs.check.outputs.should_skip }}
+
+jobs:
+  check:
+    name: Check for duplicate run
+    runs-on: ubuntu-latest
+    outputs:
+      should_skip: ${{ steps.check.outputs.should_skip }}
+    steps:
+      - id: check
+        name: Skip push run if PR exists
+        if: github.event_name == 'push'
+        run: |
+          pr_count=$(gh api "repos/${GITHUB_REPOSITORY}/pulls" | \
+            jq --arg branch "${BRANCH_NAME}" \
+              '[.[] | select(.head.ref == $branch and .state == "open")] | length')
+          if [ "$pr_count" -gt 0 ]; then
+            echo "Open PR found for branch ${BRANCH_NAME}, skipping push-triggered run"
+            echo "An open PR exists for branch \`${BRANCH_NAME}\`. This push-triggered run is redundant; the PR-triggered run handles it." >> "$GITHUB_STEP_SUMMARY"
+            echo "should_skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No open PR found for branch ${BRANCH_NAME}, proceeding"
+            echo "should_skip=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH_NAME: ${{ github.ref_name }}

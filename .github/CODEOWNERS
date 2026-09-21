@@ -1,0 +1,10 @@
+# Generated wrappers: any change must be reviewed even though it's automated
+/actions/3rdparty/    @fortify/shared-github-maintainers
+
+# Hand-written, org-owned actions
+/actions/fortify/     @fortify/shared-github-maintainers
+
+# Reusable workflows (must stay under .github/workflows per GitHub platform requirement)
+/.github/workflows/   @fortify/shared-github-maintainers
+
+/scripts/             @fortify/shared-github-maintainers

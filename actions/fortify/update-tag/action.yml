@@ -1,0 +1,28 @@
+name: 'Update Git Tag'
+description: >-
+  Creates or force-updates a Git tag to point to the current commit.
+  Requires contents:write permission.
+inputs:
+  tag_name:
+    description: Name of the tag to create or update
+    required: true
+  github_token:
+    description: >-
+      GitHub token with contents:write permission.
+      Defaults to github.token.
+    required: false
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - name: Create or update tag
+      shell: bash
+      run: |
+        gh api --method PATCH "/repos/${GITHUB_REPOSITORY}/git/refs/tags/${TAG_NAME}" \
+          -f sha="${GITHUB_SHA}" 2>/dev/null || \
+        gh api --method POST "/repos/${GITHUB_REPOSITORY}/git/refs" \
+          -f ref="refs/tags/${TAG_NAME}" \
+          -f sha="${GITHUB_SHA}"
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        TAG_NAME: ${{ inputs.tag_name }}

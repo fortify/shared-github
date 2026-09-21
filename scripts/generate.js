@@ -4,6 +4,8 @@ const path = require('path');
 const yaml = require('js-yaml');
 
 const ORG = process.env.ORG;
+// Where generated wrapper actions are written, relative to the repo root; set by the calling workflow.
+const OUTPUT_DIR = process.env.OUTPUT_DIR || 'actions/3rdparty';
 let TOKEN = null;
 const GH_APP_ID = process.env.GH_APP_ID;
 const GH_APP_PRIVATE_KEY = process.env.GH_APP_PRIVATE_KEY;
@@ -191,6 +193,7 @@ async function fetchActionYaml(owner, repo, ref) {
 
 async function main(){
   console.log('Reading allowed actions for org', ORG);
+  console.log('Writing generated wrapper actions under', OUTPUT_DIR);
   // Load optional outputs.json that can declare outputs for generated wrappers.
   let declaredOutputs = {};
   try {
@@ -343,8 +346,8 @@ async function main(){
         warnings.push(`Could not fetch action.yml for ${owner}/${repo}@${refToFetch}`);
       }
 
-      // Build composite action structure; name by full owner/repo (e.g., actions/googleapis/release-please-action/v4)
-      const actionDir = path.join(process.cwd(),'actions', owner, repo, `v${maj}`);
+      // Build composite action structure; name by full owner/repo (e.g., actions/3rdparty/googleapis/release-please-action/v4)
+      const actionDir = path.join(process.cwd(), OUTPUT_DIR, owner, repo, `v${maj}`);
       fs.mkdirSync(actionDir, { recursive: true });
       const actionYamlOut = {
         name: `${owner}/${repo} (wrapped) v${maj}`,

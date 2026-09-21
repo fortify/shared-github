@@ -1,6 +1,6 @@
 # Fortify 3rd-party action wrapper generator
 
-This repo contains a generator workflow that reads the organization's allowed actions list and generates composite wrapper actions under `actions/<owner>-<repo>/v<major>/action.yml`. GitHub Action workflows within the github.com/fortify organization should not use 3rd-party actions directly, but instead use the wrapper actions provided in this repository.
+This repo contains a generator workflow that reads the organization's allowed actions list and generates composite wrapper actions under `actions/3rdparty/<owner>/<repo>/v<major>/action.yml`. GitHub Action workflows within the github.com/fortify organization should not use 3rd-party actions directly, but instead use the wrapper actions provided in this repository.
 
 Quick usage instructions:
 - All allowed actions should be listed under `Allow or block specified actions and reusable workflows` at https://github.com/organizations/fortify/settings/actions
