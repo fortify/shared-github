@@ -2,19 +2,13 @@ name: 'Reusable: Update repo docs'
 
 # Fetches update-doc-resources.sh (and the templates/includes it references) from a
 # fixed commit of fortify/shared-doc-resources, rather than executing whatever is
-# currently on that repo's main branch. Bump SHARED_DOC_RESOURCES_REF below whenever
-# shared-doc-resources' scripts/templates/includes change and should be picked up here
-# (see "Pinning" section in shared-doc-resources' USAGE.md).
+# currently on that repo's main branch. The pinned commit SHA lives in pins/shared-doc-resources.sha
+# (a plain data file, not a workflow file) so local-bump-shared-doc-resources-pin.yml can update it
+# with a plain contents-write commit; GITHUB_TOKEN cannot push changes to files under
+# .github/workflows/ directly, which is why the pin isn't stored in this file.
 
 on:
   workflow_call:
-
-env:
-  # TODO: replace with the shared-doc-resources commit SHA that includes the
-  # SHARED_DOC_RESOURCES_REF parameterization, once that change is committed/pushed
-  # (current shared-doc-resources HEAD, efa04c5e88dd969ba898fc0ba5c96ac797146414,
-  # predates it).
-  SHARED_DOC_RESOURCES_REF: <shared-doc-resources-sha>
 
 jobs:
   update-repo-docs:
@@ -27,7 +21,10 @@ jobs:
       - name: Update documentation resources
         env:
           DOC_RESOURCES_DIR: ${{ github.workspace }}/doc-resources
-        run: source <(curl -sfL "https://raw.githubusercontent.com/fortify/shared-doc-resources/${SHARED_DOC_RESOURCES_REF}/scripts/update-doc-resources.sh")
+        run: |
+          SHARED_DOC_RESOURCES_REF=$(curl -sfL "https://raw.githubusercontent.com/fortify/shared-github/main/pins/shared-doc-resources.sha")
+          export SHARED_DOC_RESOURCES_REF
+          source <(curl -sfL "https://raw.githubusercontent.com/fortify/shared-doc-resources/${SHARED_DOC_RESOURCES_REF}/scripts/update-doc-resources.sh")
 
       - uses: $/actions/3rdparty/peter-evans/create-pull-request/v8
         with:

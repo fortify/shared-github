@@ -1,16 +1,20 @@
 name: 'Local: Bump shared-doc-resources pin'
 
+# Keeps pins/shared-doc-resources.sha pointing at the latest fortify/shared-doc-resources
+# commit, via a reviewed PR rather than an automatic push. The pin lives in a plain data
+# file (not a workflow file) specifically so this can be a normal contents-write commit:
+# GITHUB_TOKEN cannot push changes to files under .github/workflows/ regardless of the
+# permissions granted to it (see reusable-update-repo-docs.yml for why the pin isn't
+# stored there). Split into a read-only check job and a privileged open-pr job for
+# consistency with local-generate-composites.yml's least-privilege pattern.
+
 on:
   schedule:
     - cron: '15 3 * * *'
   workflow_dispatch:
 
-# Keeps SHARED_DOC_RESOURCES_REF in reusable-update-repo-docs.yml pointing at the
-# latest fortify/shared-doc-resources commit, via a reviewed PR rather than an
-# automatic push. Split into a read-only check job and a privileged open-pr job
-# for consistency with local-generate-composites.yml's least-privilege pattern.
 env:
-  TARGET_FILE: .github/workflows/reusable-update-repo-docs.yml
+  PIN_FILE: pins/shared-doc-resources.sha
   DOC_RESOURCES_REPO: fortify/shared-doc-resources
 
 jobs:
@@ -36,7 +40,7 @@ jobs:
         id: diff
         run: |
           new_sha="${{ steps.latest.outputs.sha }}"
-          if grep -qE "^\s*SHARED_DOC_RESOURCES_REF:\s*${new_sha}\s*$" "$TARGET_FILE"; then
+          if [ "$(cat "$PIN_FILE")" = "$new_sha" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -52,8 +56,8 @@ jobs:
     steps:
       - uses: $/actions/3rdparty/actions/checkout/v6
 
-      - name: Update SHARED_DOC_RESOURCES_REF pin
-        run: sed -i -E "s#(SHARED_DOC_RESOURCES_REF:).*#\1 ${{ needs.check.outputs.new_sha }}#" "$TARGET_FILE"
+      - name: Update shared-doc-resources pin
+        run: echo "${{ needs.check.outputs.new_sha }}" > "$PIN_FILE"
 
       - name: Open pull request
         env:
@@ -69,6 +73,6 @@ jobs:
             git push origin "HEAD:${branch}"
             gh pr create \
               --title "chore: bump shared-doc-resources pin to ${new_sha}" \
-              --body "Updates SHARED_DOC_RESOURCES_REF in ${TARGET_FILE} to the latest commit on ${DOC_RESOURCES_REPO}'s main branch. Review the shared-doc-resources diff for any unexpected script/template/include changes before merging." \
+              --body "Updates ${PIN_FILE} to the latest commit on ${DOC_RESOURCES_REPO}'s main branch. Review the shared-doc-resources diff for any unexpected script/template/include changes before merging." \
               --base main
           fi

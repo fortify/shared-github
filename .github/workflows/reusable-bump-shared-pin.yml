@@ -1,4 +1,14 @@
 name: 'Reusable: Bump shared-github pin'
+
+# GITHUB_TOKEN cannot push changes to files under .github/workflows/ regardless of the
+# permissions granted to it (a deliberate GitHub restriction, not something a permissions:
+# block can lift), and pinned SHAs must live inline in `uses:` lines (GitHub disallows
+# expressions/variables there), so this cannot open a PR automatically the way
+# local-bump-shared-doc-resources-pin.yml does for its plain-file pin. Instead: detect
+# whether an update is needed, generate a patch, upload it as a build artifact, and fail
+# the job so it's clearly visible. A human with normal push rights (not subject to this
+# GITHUB_TOKEN restriction) downloads the patch, applies it, and pushes/opens a PR.
+
 on:
   workflow_call:
     inputs:
@@ -11,8 +21,7 @@ jobs:
   bump:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     steps:
       - uses: $/actions/3rdparty/actions/checkout/v6
 
@@ -37,28 +46,33 @@ jobs:
             fi
           done < <(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print0)
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
-          echo "sha=$new_sha" >> "$GITHUB_OUTPUT"
 
-      - name: Open pull request
+      - name: Generate patch
         if: steps.update.outputs.changed == '1'
-        env:
-          GH_TOKEN: ${{ github.token }}
+        run: git diff > shared-github-pin-bump.patch
+
+      - name: Upload patch
+        if: steps.update.outputs.changed == '1'
+        uses: $/actions/3rdparty/actions/upload-artifact/v7
+        with:
+          name: shared-github-pin-bump.patch
+          path: shared-github-pin-bump.patch
+          retention-days: 14
+
+      - name: Fail with apply instructions
+        if: steps.update.outputs.changed == '1'
         run: |
-          new_sha="${{ steps.update.outputs.sha }}"
-          branch="chore/bump-shared-github-${new_sha}"
-          if git diff --quiet; then
-            echo "No pin changes to commit"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$branch"
-          git commit -am "chore: bump shared-github pin to ${new_sha}"
-          git push origin "HEAD:${branch}"
-          if gh pr list --head "$branch" --state open --json number --jq 'length' | grep -qx 0; then
-            gh pr create \
-              --title "chore: bump shared-github pin to ${new_sha}" \
-              --body "Updates all ${{ inputs.shared-repo }} references to the latest reviewed commit on main." \
-              --base main \
-              --head "$branch"
-          fi
+          new_sha="${{ steps.latest.outputs.sha }}"
+          {
+            echo "### shared-github pin bump available"
+            echo "A newer commit (\`${new_sha}\`) is available on \`${{ inputs.shared-repo }}\`."
+            echo "Download the \`shared-github-pin-bump.patch\` artifact from this run, then:"
+            echo '```'
+            echo "git checkout -b chore/bump-shared-github-${new_sha}"
+            echo "git apply shared-github-pin-bump.patch"
+            echo "git commit -am 'chore: bump shared-github pin to ${new_sha}'"
+            echo "git push -u origin HEAD"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::A newer fortify/shared-github commit (${new_sha}) is available; see the job summary and shared-github-pin-bump.patch artifact for how to apply it. This cannot be pushed automatically because GITHUB_TOKEN cannot modify files under .github/workflows/."
+          exit 1
