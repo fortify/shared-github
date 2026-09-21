@@ -1,0 +1,97 @@
+name: actions/setup-node (wrapped) v6
+description: >-
+  Composite wrapper for actions/setup-node pinned to
+  249970729cb0ef3589644e2896645e5dc5ba9c38
+inputs:
+  node-version:
+    description: 'Version Spec of the version to use. Examples: 12.x, 10.15.1, >=10.15.0.'
+    required: false
+  node-version-file:
+    description: >-
+      File containing the version Spec of the version to use.  Examples:
+      package.json, .nvmrc, .node-version, .tool-versions.
+    required: false
+  architecture:
+    description: >-
+      Target architecture for Node to use. Examples: x86, x64. Will use system
+      architecture by default.
+    required: false
+  check-latest:
+    description: >-
+      Set this option if you want the action to check for the latest available
+      version that satisfies the version spec.
+    required: false
+    default: false
+  registry-url:
+    description: >-
+      Optional registry to set up for auth. Will set the registry in a project
+      level .npmrc and .yarnrc file, and set up auth to read in from
+      env.NODE_AUTH_TOKEN.
+    required: false
+  scope:
+    description: >-
+      Optional scope for authenticating against scoped registries. Will fall
+      back to the repository owner when using the GitHub Packages registry
+      (https://npm.pkg.github.com/).
+    required: false
+  token:
+    description: >-
+      Used to pull node distributions from node-versions. Since there's a
+      default, this is typically not supplied by the user. When running this
+      action on github.com, the default value is sufficient. When running on
+      GHES, you can pass a personal access token for github.com if you are
+      experiencing rate limiting.
+    required: false
+    default: ${{ github.server_url == 'https://github.com' && github.token || '' }}
+  cache:
+    description: >-
+      Used to specify a package manager for caching in the default directory.
+      Supported values: npm, yarn, pnpm.
+    required: false
+  package-manager-cache:
+    description: >-
+      Set to false to disable automatic caching. By default, caching is enabled
+      when either devEngines.packageManager or the top-level packageManager
+      field in package.json specifies npm as the package manager.
+    required: false
+    default: true
+  cache-dependency-path:
+    description: >-
+      Used to specify the path to a dependency file: package-lock.json,
+      yarn.lock, etc. Supports wildcards or a list of file names for caching
+      multiple dependencies.
+    required: false
+  mirror:
+    description: Used to specify an alternative mirror to download Node.js binaries from
+    required: false
+  mirror-token:
+    description: The token used as Authorization header when fetching from the mirror
+    required: false
+outputs:
+  cache-hit:
+    description: A boolean value to indicate if a cache was hit.
+    value: ${{ steps.upstream.outputs.cache-hit }}
+  node-version:
+    description: The installed node version.
+    value: ${{ steps.upstream.outputs.node-version }}
+  all_upstream_outputs:
+    description: All outputs from upstream step as JSON
+    value: ${{ toJSON(steps.upstream.outputs) }}
+runs:
+  using: composite
+  steps:
+    - id: upstream
+      uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      with:
+        node-version: ${{ inputs.node-version }}
+        node-version-file: ${{ inputs.node-version-file }}
+        architecture: ${{ inputs.architecture }}
+        check-latest: ${{ inputs.check-latest }}
+        registry-url: ${{ inputs.registry-url }}
+        scope: ${{ inputs.scope }}
+        token: ${{ inputs.token }}
+        cache: ${{ inputs.cache }}
+        package-manager-cache: ${{ inputs.package-manager-cache }}
+        cache-dependency-path: ${{ inputs.cache-dependency-path }}
+        mirror: ${{ inputs.mirror }}
+        mirror-token: ${{ inputs.mirror-token }}
