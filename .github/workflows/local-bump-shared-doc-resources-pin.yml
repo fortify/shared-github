@@ -1,0 +1,74 @@
+name: 'Local: Bump shared-doc-resources pin'
+
+on:
+  schedule:
+    - cron: '15 3 * * *'
+  workflow_dispatch:
+
+# Keeps SHARED_DOC_RESOURCES_REF in reusable-update-repo-docs.yml pointing at the
+# latest fortify/shared-doc-resources commit, via a reviewed PR rather than an
+# automatic push. Split into a read-only check job and a privileged open-pr job
+# for consistency with local-generate-composites.yml's least-privilege pattern.
+env:
+  TARGET_FILE: .github/workflows/reusable-update-repo-docs.yml
+  DOC_RESOURCES_REPO: fortify/shared-doc-resources
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      new_sha: ${{ steps.latest.outputs.sha }}
+      changed: ${{ steps.diff.outputs.changed }}
+    steps:
+      - uses: $/actions/3rdparty/actions/checkout/v6
+
+      - name: Resolve latest shared-doc-resources main SHA
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha=$(gh api "repos/${DOC_RESOURCES_REPO}/commits/main" --jq .sha)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether pin needs updating
+        id: diff
+        run: |
+          new_sha="${{ steps.latest.outputs.sha }}"
+          if grep -qE "^\s*SHARED_DOC_RESOURCES_REF:\s*${new_sha}\s*$" "$TARGET_FILE"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  open-pr:
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: $/actions/3rdparty/actions/checkout/v6
+
+      - name: Update SHARED_DOC_RESOURCES_REF pin
+        run: sed -i -E "s#(SHARED_DOC_RESOURCES_REF:).*#\1 ${{ needs.check.outputs.new_sha }}#" "$TARGET_FILE"
+
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          new_sha="${{ needs.check.outputs.new_sha }}"
+          branch="chore/bump-shared-doc-resources-${new_sha}"
+          if gh pr list --head "$branch" --state open --json number --jq 'length' | grep -qx 0; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout -b "$branch"
+            git commit -am "chore: bump shared-doc-resources pin to ${new_sha}"
+            git push origin "HEAD:${branch}"
+            gh pr create \
+              --title "chore: bump shared-doc-resources pin to ${new_sha}" \
+              --body "Updates SHARED_DOC_RESOURCES_REF in ${TARGET_FILE} to the latest commit on ${DOC_RESOURCES_REPO}'s main branch. Review the shared-doc-resources diff for any unexpected script/template/include changes before merging." \
+              --base main
+          fi

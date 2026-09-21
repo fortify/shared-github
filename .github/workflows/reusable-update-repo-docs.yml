@@ -1,0 +1,40 @@
+name: 'Reusable: Update repo docs'
+
+# Fetches update-doc-resources.sh (and the templates/includes it references) from a
+# fixed commit of fortify/shared-doc-resources, rather than executing whatever is
+# currently on that repo's main branch. Bump SHARED_DOC_RESOURCES_REF below whenever
+# shared-doc-resources' scripts/templates/includes change and should be picked up here
+# (see "Pinning" section in shared-doc-resources' USAGE.md).
+
+on:
+  workflow_call:
+
+env:
+  # TODO: replace with the shared-doc-resources commit SHA that includes the
+  # SHARED_DOC_RESOURCES_REF parameterization, once that change is committed/pushed
+  # (current shared-doc-resources HEAD, efa04c5e88dd969ba898fc0ba5c96ac797146414,
+  # predates it).
+  SHARED_DOC_RESOURCES_REF: <shared-doc-resources-sha>
+
+jobs:
+  update-repo-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: $/actions/3rdparty/actions/checkout/v6
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Update documentation resources
+        env:
+          DOC_RESOURCES_DIR: ${{ github.workspace }}/doc-resources
+        run: source <(curl -sfL "https://raw.githubusercontent.com/fortify/shared-doc-resources/${SHARED_DOC_RESOURCES_REF}/scripts/update-doc-resources.sh")
+
+      - uses: $/actions/3rdparty/peter-evans/create-pull-request/v8
+        with:
+          commit-message: 'docs: Auto-update documentation resources'
+          branch: auto-doc-updates
+          delete-branch: true
+          title: 'Update documentation resources'
+          labels: |
+            automated pr
+            documentation
