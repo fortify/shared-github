@@ -39,14 +39,18 @@ jobs:
         run: |
           repo="${{ inputs.shared-repo }}"
           new_sha="${{ steps.latest.outputs.sha }}"
-          changed=0
           while IFS= read -r -d '' f; do
             if grep -qE "${repo}/[^@[:space:]]+@[0-9a-f]{40}" "$f"; then
               sed -i -E "s#(${repo}/[^@[:space:]]+@)[0-9a-f]{40}#\1${new_sha}#g" "$f"
-              changed=1
             fi
           done < <(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) -print0)
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          # Base "changed" on whether content actually differs, not just on whether a
+          # matching reference was found (a match with the identical SHA is a no-op).
+          if git diff --quiet; then
+            echo "changed=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=1" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Fail with copy/paste apply instructions
         if: steps.update.outputs.changed == '1'
