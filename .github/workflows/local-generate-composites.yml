@@ -2,6 +2,11 @@ name: 'Local: Generate third-party composite actions'
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '5 3 * * *'
+  push:
+    branches:
+      - main
 
 env:
   # Where scripts/generate.js writes composite wrapper actions, relative to the repo root.
