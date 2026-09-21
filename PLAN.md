@@ -21,7 +21,14 @@ completes them.
         (`reusable-check-duplicate-run.yml`, `reusable-fortify-analysis.yml`,
         `actions/fortify/update-tag`)
   - [x] `local-generate-composites.yml` updated to the PR-based flow + inline
-        scoped-diff check
+        scoped-diff check, split into a least-privilege `generate` job
+        (`contents: read` only) and an `open-pr` job (`contents: write` +
+        `pull-requests: write`) that consumes an artifact from `generate` —
+        the generator and its npm deps never hold a token that can push/PR
+  - [x] Fixed: first live run failed at the PR-creation step with
+        `Resource not accessible by integration (createPullRequest)` — root
+        cause was the job's `permissions:` block missing `pull-requests: write`
+        entirely (only had `contents: write`); now present on the `open-pr` job
   - [x] `generate.js` updated: output dir now configurable via `OUTPUT_DIR`
         (default `actions/3rdparty`), passed from the workflow's job-level `env:`
   - [x] `README.md` updated to reflect the new output path
@@ -194,21 +201,28 @@ required check — see "Scoped generator diff" for the concrete implementation.
 
 ## Required changes in the shared repo (`shared-github`)
 
-### 1. Generator opens a PR instead of pushing to `main`
+### 1. Generator opens a PR instead of pushing to `main`, split into least-privilege jobs
 
-Replace the final step of `local-generate-composites.yml`. The job's
-`permissions:` block grants `contents: write` and `pull-requests: write` on
-`GITHUB_TOKEN`; the App token is used *only* for `fetchAllowedActions`, never
-for git operations:
+Implemented as two jobs in `local-generate-composites.yml`: `generate` runs the
+generator itself (and its npm dependencies) with only `contents: read` — no
+git-push or PR permissions at all, so a compromised `generate.js`/dependency
+can produce a bad wrapper at worst, never push or open anything. It uploads
+the regenerated `actions/3rdparty/**` tree as a build artifact. A second job,
+`open-pr`, holds `contents: write` + `pull-requests: write` and runs no
+generator code — only `git`/`gh` commands against the artifact `generate`
+already produced and scope-checked:
 
 ```yaml
+env:
+  OUTPUT_DIR: actions/3rdparty
+
 jobs:
   generate:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
-
+      contents: read
+    outputs:
+      has_changes: ${{ steps.diff.outputs.has_changes }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -216,6 +230,7 @@ jobs:
       # generator now writes wrappers under actions/3rdparty/** instead of top-level actions/**
 
       - name: Verify generated diff stays within actions/3rdparty/**
+        id: diff
         run: |
           out_of_scope=$(git status --porcelain | awk '{print $2}' | grep -v '^actions/3rdparty/' || true)
           if [ -n "$out_of_scope" ]; then
@@ -223,6 +238,39 @@ jobs:
             echo "$out_of_scope"
             exit 1
           fi
+          if git status --porcelain -- "$OUTPUT_DIR" | grep -q .; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload generated wrapper actions
+        if: steps.diff.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: generated-wrapper-actions
+          path: ${{ env.OUTPUT_DIR }}
+          retention-days: 1
+
+  open-pr:
+    needs: generate
+    if: needs.generate.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Remove existing wrapper actions
+        run: rm -rf "$OUTPUT_DIR"
+
+      - name: Download generated wrapper actions
+        uses: actions/download-artifact@v8
+        with:
+          name: generated-wrapper-actions
+          path: ${{ env.OUTPUT_DIR }}
 
       - name: Commit changes to branch
         env:
@@ -233,17 +281,10 @@ jobs:
           git config user.email "$GIT_AUTHOR_EMAIL"
           git checkout -b "chore/update-generated-actions-${{ github.run_id }}"
           git add -A
-          if git diff --cached --quiet; then
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
-          else
-            git commit -m "chore: update generated composite actions"
-            git push origin "HEAD:chore/update-generated-actions-${{ github.run_id }}"
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
-          fi
-        id: commit
+          git commit -m "chore: update generated composite actions"
+          git push origin "HEAD:chore/update-generated-actions-${{ github.run_id }}"
 
       - name: Open pull request
-        if: steps.commit.outputs.has_changes == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -254,24 +295,30 @@ jobs:
             --head "chore/update-generated-actions-${{ github.run_id }}"
 ```
 
-The out-of-scope check runs *before* anything is pushed, so a generator bug
-(or a compromised `generate.js`) can never even produce a branch/PR outside
-`actions/3rdparty/**` — the job simply fails. `GITHUB_TOKEN` is scoped to this
-repo by the `permissions:` block and is sufficient for both the push and
+The out-of-scope check runs *before anything is even archived*, so a
+generator bug (or a compromised `generate.js`) can never even reach the
+artifact handed to the privileged `open-pr` job — the `generate` job simply
+fails. Note the check remains useful even though only `actions/3rdparty/**` is
+archived: it's not just data-flow control but an alarm — if the generator ever
+touches anything else, we want the run to fail loudly rather than silently
+discard the unexpected change. `GITHUB_TOKEN` in `open-pr` is scoped to this
+repo by its `permissions:` block and is sufficient for both the push and
 `gh pr create`; the org-level App token is only ever used earlier, inside
-`generate.js`, to read the allow-list.
+`generate.js` (in the unprivileged `generate` job), to read the allow-list.
 
 ### 2. Scoped generator diff (defense in depth)
 
 Because a bot-opened PR can't rely on a separate required `pull_request` check
-(see auth model above), the generator job validates its own diff **before**
-pushing the branch or opening the PR: after running `generate.js`, the changed
-paths must all be under `actions/3rdparty/**`; the job fails (no branch
-pushed, no PR opened) otherwise. This limits the blast radius of a
-compromised `generate.js` (e.g. via a compromised npm dependency) to "can
-propose a bad wrapper", not "can rewrite CI or hand-written actions" — the
-generator process is structurally incapable of touching
-`.github/workflows/**`, `actions/fortify/**`, or `scripts/**`.
+(see auth model above), the `generate` job validates its own diff **before**
+archiving anything for the `open-pr` job: after running `generate.js`, the
+changed paths must all be under `actions/3rdparty/**`; the job fails (nothing
+archived, no branch pushed, no PR opened) otherwise. This limits the blast
+radius of a compromised `generate.js` (e.g. via a compromised npm dependency)
+to "can propose a bad wrapper", not "can rewrite CI or hand-written actions" —
+the generator process is structurally incapable of touching
+`.github/workflows/**`, `actions/fortify/**`, or `scripts/**`, **and** it never
+holds a token capable of pushing or opening a PR in the first place (that
+token only exists in the separate `open-pr` job).
 
 ### 3. Branch protection on `main`
 

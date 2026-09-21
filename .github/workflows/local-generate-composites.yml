@@ -3,15 +3,19 @@ name: 'Local: Generate third-party composite actions'
 on:
   workflow_dispatch:
 
+env:
+  # Where scripts/generate.js writes composite wrapper actions, relative to the repo root.
+  OUTPUT_DIR: actions/3rdparty
+
 jobs:
+  # Runs the generator (and its npm dependencies) with no git-push/PR permissions at all,
+  # so a compromised generate.js/dependency cannot push commits or open PRs.
   generate:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      actions: read
-    env:
-      # Where scripts/generate.js writes composite wrapper actions, relative to the repo root.
-      OUTPUT_DIR: actions/3rdparty
+      contents: read
+    outputs:
+      has_changes: ${{ steps.diff.outputs.has_changes }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -36,6 +40,7 @@ jobs:
         run: node ./scripts/generate.js
 
       - name: Verify generated diff stays within ${{ env.OUTPUT_DIR }}/**
+        id: diff
         run: |
           out_of_scope=$(git status --porcelain | awk '{print $2}' | grep -v "^${OUTPUT_DIR}/" || true)
           if [ -n "$out_of_scope" ]; then
@@ -43,6 +48,41 @@ jobs:
             echo "$out_of_scope"
             exit 1
           fi
+          if git status --porcelain -- "$OUTPUT_DIR" | grep -q .; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload generated wrapper actions
+        if: steps.diff.outputs.has_changes == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: generated-wrapper-actions
+          path: ${{ env.OUTPUT_DIR }}
+          retention-days: 1
+
+  # Only this job can push/open a PR; it runs no generator code, only git/gh commands
+  # against the artifact the generate job already produced and scope-checked.
+  open-pr:
+    needs: generate
+    if: needs.generate.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Remove existing wrapper actions
+        run: rm -rf "$OUTPUT_DIR"
+
+      - name: Download generated wrapper actions
+        uses: actions/download-artifact@v8
+        with:
+          name: generated-wrapper-actions
+          path: ${{ env.OUTPUT_DIR }}
 
       - name: Commit changes to branch
         env:
@@ -53,17 +93,10 @@ jobs:
           git config user.email "$GIT_AUTHOR_EMAIL"
           git checkout -b "chore/update-generated-actions-${{ github.run_id }}"
           git add -A
-          if git diff --cached --quiet; then
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
-          else
-            git commit -m "chore: update generated composite actions"
-            git push origin "HEAD:chore/update-generated-actions-${{ github.run_id }}"
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
-          fi
-        id: commit
+          git commit -m "chore: update generated composite actions"
+          git push origin "HEAD:chore/update-generated-actions-${{ github.run_id }}"
 
       - name: Open pull request
-        if: steps.commit.outputs.has_changes == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
