@@ -2,7 +2,7 @@
 # because an open PR already exists for the branch (which triggers its own run).
 # Callers should gate their real jobs on: needs.check-duplicate-run.outputs.should_skip != 'true'
 
-name: Check for duplicate run
+name: 'Reusable: Check for duplicate run'
 
 on:
   workflow_call:

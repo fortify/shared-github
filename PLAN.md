@@ -18,9 +18,9 @@ completes them.
         auto-redirects)
   - [x] Directory structure updated: `actions/3rdparty/`, `actions/fortify/`
   - [x] Reusable workflows/actions moved in from the `.github` repo
-        (`check-duplicate-run.yml`, `fortify-analysis.yml`,
+        (`reusable-check-duplicate-run.yml`, `reusable-fortify-analysis.yml`,
         `actions/fortify/update-tag`)
-  - [x] `generate-composites.yml` updated to the PR-based flow + inline
+  - [x] `local-generate-composites.yml` updated to the PR-based flow + inline
         scoped-diff check
   - [x] `generate.js` updated: output dir now configurable via `OUTPUT_DIR`
         (default `actions/3rdparty`), passed from the workflow's job-level `env:`
@@ -37,10 +37,20 @@ completes them.
         only, no repo `contents`/`pull_requests` permissions)
   - [ ] Alerting on push-to-`main` / merged PRs (not started)
   - [ ] TODO: Set `protect-main` ruleset to 'enforced'
-- [x] **Step 3 — Add `bump-shared-pin.yml` reusable workflow**
-  - [x] `.github/workflows/bump-shared-pin.yml` added, callable via `workflow_call`
+  - [ ] TODO: update GitHub org config (`Allow or block specified actions and
+        reusable workflows`) to require actions be referenced by commit SHA
+        only, no version tags/branches — and reusable workflows too, if the
+        org settings support restricting those to SHA references as well
+        (double-check; this may only apply to actions)
+- [x] **Step 3 — Add `reusable-bump-shared-pin.yml` reusable workflow**
+  - [x] `.github/workflows/reusable-bump-shared-pin.yml` added, callable via `workflow_call`
   - [ ] TODO: validate manually against a fork/test consumer repo before rolling
         out to `fcli` (Step 4)
+  - Note: it only bumps references already pinned to a 40-hex-char commit SHA
+    (`.../shared-github/...@<sha>`); it does not touch `@main`/`@v1`/branch or
+    tag refs. A consumer's first conversion from `@main` to a SHA (Step 5) must
+    happen manually/once before this workflow has anything to bump for that
+    reference.
 - [ ] **Step 4 — Roll out consumer-side `bump-shared-github.yml` to `fcli`** (not started)
   - [ ] TODO:
 - [ ] **Step 5 — Migrate `@main` references in `fcli` (and other consumers) to
@@ -74,7 +84,15 @@ shared-github/
   `workflow_call`-reusable workflow files from `.github/workflows/` in the
   repository root — there is no way to relocate them under `actions/` or
   anywhere else. This is the one exception to "own stuff lives under
-  `actions/fortify/`".
+  `actions/fortify/`". Since GitHub doesn't support subdirectories here, a
+  **filename prefix** is used instead to tell the two kinds apart:
+  `reusable-*.yml` for workflows whose only trigger is `workflow_call` (meant
+  to be called from other repos), `local-*.yml` for workflows that run for
+  this repo itself (e.g. `local-generate-composites.yml`, triggered by
+  `workflow_dispatch`). The `name:` field mirrors the same prefix
+  (`'Reusable: <title>'` / `'Local: <title>'`) so the two kinds are also
+  grouped/recognizable in the GitHub Actions UI, which lists runs by `name:`
+  rather than filename.
 
 This consolidates what today are two repos (`3rdparty-actions` and hand-written
 bits of `.github`) into one, so a consumer tracks a **single** commit SHA for
@@ -124,11 +142,11 @@ step. That means:
 sequenceDiagram
     actor Admin as Org admin
     participant Org as GitHub org settings<br/>(allowed actions)
-    participant Gen as generate-composites.yml<br/>(in shared-github repo)
+    participant Gen as local-generate-composites.yml<br/>(in shared-github repo)
     participant SharedPR as PR in shared-github
     actor Reviewer as CODEOWNERS reviewer
     participant Main as shared-github main
-    participant Bump as bump-shared-pin.yml<br/>(reusable workflow)
+    participant Bump as reusable-bump-shared-pin.yml<br/>(reusable workflow)
     participant ConsumerPR as PR in consumer repo (e.g. fcli)
     actor ConsumerReviewer as Consumer repo reviewer
     participant ConsumerMain as consumer main
@@ -178,7 +196,7 @@ required check — see "Scoped generator diff" for the concrete implementation.
 
 ### 1. Generator opens a PR instead of pushing to `main`
 
-Replace the final step of `generate-composites.yml`. The job's
+Replace the final step of `local-generate-composites.yml`. The job's
 `permissions:` block grants `contents: write` and `pull-requests: write` on
 `GITHUB_TOKEN`; the App token is used *only* for `fetchAllowedActions`, never
 for git operations:
@@ -320,7 +338,7 @@ Add a notification (Slack webhook or similar) on:
 
 ## New reusable workflow: pin bump for consumer repos
 
-Add `.github/workflows/bump-shared-pin.yml` in `shared-github`, callable via
+Add `.github/workflows/reusable-bump-shared-pin.yml` in `shared-github`, callable via
 `workflow_call`, that:
 
 1. Resolves `shared-github`'s current `main` SHA.
@@ -418,7 +436,7 @@ permissions:
 
 jobs:
   bump:
-    uses: fortify/shared-github/.github/workflows/bump-shared-pin.yml@<pinned-sha>
+    uses: fortify/shared-github/.github/workflows/reusable-bump-shared-pin.yml@<pinned-sha>
 ```
 
 Notes:
@@ -437,9 +455,9 @@ Once `shared-github` exists with its final layout, update consumers (starting
 with `fcli`, which currently has the most references):
 
 - `fortify/.github/.github/workflows/check-duplicate-run.yml@main` →
-  `fortify/shared-github/.github/workflows/check-duplicate-run.yml@<sha>`
+  `fortify/shared-github/.github/workflows/reusable-check-duplicate-run.yml@<sha>`
 - `fortify/.github/.github/workflows/fortify-analysis.yml@main` →
-  `fortify/shared-github/.github/workflows/fortify-analysis.yml@<sha>`
+  `fortify/shared-github/.github/workflows/reusable-fortify-analysis.yml@<sha>`
 - `fortify/.github/.github/actions/update-tag@main` →
   `fortify/shared-github/actions/fortify/update-tag@<sha>`
 - `fortify/3rdparty-actions/actions/<owner>/<repo>/v<major>@main` →
@@ -459,19 +477,22 @@ security controls on top of it.
    - Rename `3rdparty-actions` → `shared-github` (GitHub auto-redirects the
      old name and old `@main` references keep working during the transition).
    - Move `actions/<owner>/<repo>/v<major>` → `actions/3rdparty/<owner>/<repo>/v<major>`
-     in the generator output and update `generate-composites.yml`/`generate.js`
+     in the generator output and update `local-generate-composites.yml`/`generate.js`
      accordingly (output dir, cleanup step, README).
    - Move `.github/actions/update-tag` (from the `.github` repo) →
      `actions/fortify/update-tag` in `shared-github`.
    - Move `.github/workflows/check-duplicate-run.yml` and
      `.github/workflows/fortify-analysis.yml` (from the `.github` repo) →
-     `shared-github/.github/workflows/` (unchanged relative location, since
-     workflows can't move out of `.github/workflows`).
+     `shared-github/.github/workflows/reusable-check-duplicate-run.yml` and
+     `shared-github/.github/workflows/reusable-fortify-analysis.yml`
+     (unchanged relative location, since workflows can't move out of
+     `.github/workflows`; renamed with a `reusable-` prefix per the naming
+     convention above).
    - Do this as a single reviewed PR. No hardening/branch-protection changes
      yet — just get the structure right.
 2. Harden `shared-github` (branch protection, CODEOWNERS using the new paths,
    PR-based generator with the `3rdparty/**`-scoped diff check).
-3. Add the `bump-shared-pin.yml` reusable workflow + validate manually against
+3. Add the `reusable-bump-shared-pin.yml` reusable workflow + validate manually against
    a fork/test consumer repo.
 4. Roll out the consumer-side `bump-shared-github.yml` workflow to `fcli`
    first (highest reference count; just adds the workflow file with its

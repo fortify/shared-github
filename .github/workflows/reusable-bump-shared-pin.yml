@@ -1,4 +1,4 @@
-name: Bump shared-github pin
+name: 'Reusable: Bump shared-github pin'
 on:
   workflow_call:
     inputs:

@@ -6,7 +6,7 @@
 # repositories that need to be scanned, and pull requests generated from forks will not have access to those secrets.
 # In such cases, the FoD scan will be skipped without errors.
 
-name: Fortify on Demand Scan
+name: 'Reusable: Fortify on Demand Scan'
 
 on:
   workflow_call:

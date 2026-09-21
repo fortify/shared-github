@@ -1,4 +1,4 @@
-name: Generate third-party composite actions
+name: 'Local: Generate third-party composite actions'
 
 on:
   workflow_dispatch:
