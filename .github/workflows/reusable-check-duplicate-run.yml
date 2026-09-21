@@ -23,8 +23,8 @@ jobs:
         if: github.event_name == 'push'
         run: |
           pr_count=$(gh api "repos/${GITHUB_REPOSITORY}/pulls" | \
-            jq --arg branch "${BRANCH_NAME}" \
-              '[.[] | select(.head.ref == $branch and .state == "open")] | length')
+            jq --arg branch "${BRANCH_NAME}" --arg repository "${GITHUB_REPOSITORY}" \
+              '[.[] | select(.head.ref == $branch and .head.repo.full_name == $repository and .state == "open")] | length')
           if [ "$pr_count" -gt 0 ]; then
             echo "Open PR found for branch ${BRANCH_NAME}, skipping push-triggered run"
             echo "An open PR exists for branch \`${BRANCH_NAME}\`. This push-triggered run is redundant; the PR-triggered run handles it." >> "$GITHUB_STEP_SUMMARY"
