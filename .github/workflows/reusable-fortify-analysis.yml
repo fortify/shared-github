@@ -23,6 +23,11 @@ on:
         description: '.NET version to set up (e.g. 8.0). Leave empty to skip .NET setup.'
         type: string
         required: false
+      debug:
+        description: 'Whether to generate & collect fcli debug artifacts; note that these may contain sensitive data like access tokens or credentials. Automatically enabled when workflow is re-run with "Enable debug logging" checked.'
+        type: boolean
+        required: false
+        default: false
     secrets:
       OSS_FOD_TENANT:
         required: false
@@ -82,9 +87,26 @@ jobs:
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
 
+      # Bootstrap fcli directly via npx instead of fortify/github-action, which pulls in
+      # version-pinned (non-SHA) internal action references we can't yet get rid of; see
+      # https://github.com/fortify/github-action/issues/92
+      - name: Bootstrap fcli
+        shell: bash
+        run: |
+          npx @fortify/setup@2 env init --tools=fcli:bootstrapped
+          npx @fortify/setup@2 env github
+
+      - name: Set Fortify data directory
+        shell: bash
+        run: echo "FORTIFY_DATA_DIR=${RUNNER_TEMP}/fortify-data" >> "$GITHUB_ENV"
+
       - name: Run FoD SAST scan
-        uses: $/actions/3rdparty/fortify/github-action/v3
+        shell: bash
+        run: |
+          mkdir -p "${FORTIFY_DATA_DIR}" && cd "${FORTIFY_DATA_DIR}"
+          fcli action run ci --debug=${{ inputs.debug || runner.debug == '1' }}
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           FOD_URL: https://ams.fortify.com/
           FOD_TENANT: ${{secrets.OSS_FOD_TENANT}}
           FOD_USER: ${{secrets.OSS_FOD_USER}}
@@ -94,3 +116,11 @@ jobs:
           DO_AVIATOR_AUDIT: true
           OVERRIDE_SAST_SETTINGS: true
           SETUP_EXTRA_OPTS: --sdlc-status Development --scan-types sast
+
+      - name: Upload debug artifacts
+        if: ${{ always() && (inputs.debug || runner.debug == '1') }}
+        uses: $/actions/3rdparty/actions/upload-artifact/v7
+        with:
+          name: fortify-debug-artifacts-${{ github.job }}
+          path: ${{ env.FORTIFY_DATA_DIR }}
+          retention-days: 1
