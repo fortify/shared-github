@@ -46,10 +46,18 @@ scripts/generate.js                                   # wrapper generator
 4. A CODEOWNERS-designated reviewer reviews and merges the PR into `main`,
    which is protected (PR required, required approvals, no direct pushes).
 
-Consumer repositories stay current via a separate, per-repo pull mechanism
-(see below) rather than by referencing `main` directly, so a change here only
-reaches a consumer after two independent human-reviewed merges: the PR above,
-and the consumer's own pin-bump PR.
+Consumer repositories use pinned SHAs. Their bump workflow checks the latest
+`shared-github/main` commit on every push, daily, manually, or through the
+`shared-github-updated` `repository_dispatch` event. If pins are stale, the
+workflow prints a copy/pasteable patch in the job summary and fails visibly.
+The patch is applied by a maintainer, who then opens the normal consumer PR.
+This is deliberate: the default `GITHUB_TOKEN` cannot modify files under
+`.github/workflows/`, so the current design does not grant a workflow-file-write
+App or PAT to every consumer.
+
+Current migrated consumers include `fcli`, `fcli-docker`, and
+`tool-definitions`. Parser plugin repositories and other Fortify repositories
+remain to be migrated.
 
 ## Consuming this repo
 
@@ -68,11 +76,15 @@ jobs:
 Currently available reusable workflows: `reusable-check-duplicate-run.yml`
 (skip a push-triggered run when an open PR already covers the same branch),
 `reusable-fortify-analysis.yml` (Fortify on Demand SAST/SCA scan), and
-`reusable-bump-shared-pin.yml` (see below).
+`reusable-update-repo-docs.yml` (updates downstream generated docs from a
+pinned `shared-doc-resources` commit), and `reusable-bump-shared-pin.yml`
+(see below). The local workflows also include the wrapper generator and the
+automated `shared-doc-resources` pin checker.
 
-To keep that pin current without hand-editing SHAs, add a workflow to the
-consumer repo that calls the **Reusable: Bump shared-github pin** workflow on
 a schedule:
+To check that pin without hand-editing or silently changing workflow files, add
+a workflow to the consumer repo that calls the **Reusable: Bump shared-github
+pin** workflow:
 
 ```yaml
 # .github/workflows/bump-shared-github.yml
@@ -80,24 +92,30 @@ name: Bump shared-github pin
 
 on:
   schedule:
-    - cron: '0 6 * * 1'   # weekly
-  workflow_dispatch: {}
+    - cron: '0 6 * * *'   # daily
+  workflow_dispatch:
+  push:
+  repository_dispatch:
+    types: [shared-github-updated]
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   bump:
     uses: fortify/shared-github/.github/workflows/reusable-bump-shared-pin.yml@<pinned-sha>
 ```
 
-This opens a PR in the consumer repo that rewrites every
-`fortify/shared-github/...@<sha>` reference in its `.github/workflows/*.yml`
-files to the latest commit on this repo's `main` — one commit SHA, one bump
-PR, covering wrapper actions, hand-written actions, and reusable workflows
-alike. The resulting PR still goes through the consumer repo's normal review
-and branch protection before merge.
+When a pin is stale, the reusable workflow emits a small unified diff and
+commands such as `git apply` in the job summary, then fails. Apply that patch
+on a local branch and open a normal reviewed PR. It updates all
+`fortify/shared-github/...@<sha>` references in the consumer's workflow files
+at once, covering wrappers, hand-written actions, and reusable workflows.
+
+The workflow only updates references already pinned to a 40-character commit
+SHA; initial conversion from `@main` or a tag is a deliberate migration step.
+A future central dispatcher can trigger the existing
+`repository_dispatch` event without changing each consumer workflow again.
 
 ## Outputs & `all_upstream_outputs`
 
@@ -148,8 +166,9 @@ See `outputs.json` in this repository for real entries.
 
 ## Repository security model
 
-- `main` is protected by a ruleset requiring PR review (including Code Owners)
-  and blocking direct pushes/force pushes, with an empty bypass list.
+- A `protect-main` ruleset is configured to require PR review (including Code
+  Owners), block direct pushes/force pushes, and use an empty bypass list;
+  verify that its enforcement status is Active before relying on it.
 - `CODEOWNERS` requires review on `actions/3rdparty/`, `actions/fortify/`,
   `.github/workflows/`, and `scripts/`.
 - The only GitHub App used here is scoped to a read-only, org-level
@@ -160,3 +179,7 @@ See `outputs.json` in this repository for real entries.
   `actions/3rdparty/**` before pushing anything, so a compromised
   `generate.js` (or a compromised npm dependency of it) cannot touch
   `.github/workflows/**`, `actions/fortify/**`, or `scripts/**`.
+- Consumer pin checks are read-only and do not hold credentials capable of
+  modifying workflow files. A future fully automatic PR design would require
+  a narrowly installed GitHub App with workflow-file write permission; that is
+  intentionally not part of the current model.

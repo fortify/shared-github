@@ -2,9 +2,10 @@
 
 ## Status
 
-Draft. Not yet implemented. This document describes the target process and the
-concrete changes needed to get there. It supersedes the current direct-push
-model used by `generate-composites.yml`.
+Implementation in progress. The repository rename, layout, generator hardening,
+shared workflows, and initial consumer migrations are complete. Remaining work
+is primarily organization configuration and migration of the remaining consumer
+repositories.
 
 ## Progress
 
@@ -32,16 +33,15 @@ completes them.
   - [x] `generate.js` updated: output dir now configurable via `OUTPUT_DIR`
         (default `actions/3rdparty`), passed from the workflow's job-level `env:`
   - [x] `README.md` updated to reflect the new output path
-  - [ ] TODO: rename local clone/workspace folder to `shared-github` (GitHub
-        side is done; local folder name is cosmetic only, not urgent)
+  - [x] Local workspace is now `shared-github`
 - [ ] **Step 2 — Harden `shared-github`**
   - [x] `CODEOWNERS` added (`@fortify/shared-github-maintainers`, covering
         `/actions/3rdparty/`, `/actions/fortify/`, `/.github/workflows/`,
         `/scripts/`)
   - [X] Branch ruleset `protect-main` created
   - [X] Confirm bypass list on the ruleset is empty (no admin/owner override)
-  - [ ] Confirm least-privilege GitHub App scoping (org-level allow-list read
-        only, no repo `contents`/`pull_requests` permissions)
+    - [ ] Confirm least-privilege GitHub App scoping (org-level allow-list read
+      only, no repo `contents`/`pull_requests` permissions)
   - [ ] Alerting on push-to-`main` / merged PRs (not started)
   - [ ] TODO: Set `protect-main` ruleset to 'enforced'
   - [ ] TODO: update GitHub org config (`Allow or block specified actions and
@@ -49,24 +49,35 @@ completes them.
         only, no version tags/branches — and reusable workflows too, if the
         org settings support restricting those to SHA references as well
         (double-check; this may only apply to actions)
+    - [ ] TODO: add allow-list update detection so an already-allowed SHA can
+      produce a proposed replacement even when the org allow-list has not
+      changed; see `## Allow-list update proposals` below
 - [x] **Step 3 — Add `reusable-bump-shared-pin.yml` reusable workflow**
-  - [x] `.github/workflows/reusable-bump-shared-pin.yml` added, callable via `workflow_call`
-  - [ ] TODO: validate manually against a fork/test consumer repo before rolling
-        out to `fcli` (Step 4)
-  - Note: it only bumps references already pinned to a 40-hex-char commit SHA
-    (`.../shared-github/...@<sha>`); it does not touch `@main`/`@v1`/branch or
-    tag refs. A consumer's first conversion from `@main` to a SHA (Step 5) must
-    happen manually/once before this workflow has anything to bump for that
-    reference.
-- [ ] **Step 4 — Roll out consumer-side `bump-shared-github.yml` to `fcli`** (not started)
-  - [ ] TODO:
-- [ ] **Step 5 — Migrate `@main` references in `fcli` (and other consumers) to
-      pinned SHAs against `shared-github`'s new paths** (not started)
-  - [ ] TODO:
-- [ ] **Step 6 — Remove now-unused workflows/actions from `.github`** (not
-      started; `shared-github` currently duplicates them, `.github` originals
-      still in place)
-  - [ ] TODO:
+  - [x] Added as a `workflow_call` reusable workflow
+  - [x] Changed to read-only patch generation because `GITHUB_TOKEN` cannot
+    modify files under `.github/workflows/`
+  - [x] Job summary contains copy/pasteable `git apply` instructions and the
+    workflow fails visibly when a pin update is needed
+  - [x] Caller workflows support `schedule`, manual dispatch, push, and typed
+    `repository_dispatch` triggers
+- [x] **Step 4 — Roll out consumer-side `bump-shared-github.yml`**
+  - [x] Added to `fcli`, `fcli-docker`, `tool-definitions`, and
+    `shared-doc-resources`
+  - [x] These workflows run on every push, daily, manually, and on
+    `repository_dispatch` type `shared-github-updated`
+- [x] **Step 5 — Migrate initial consumers to pinned `shared-github` SHAs**
+  - [x] `fcli`
+  - [x] `fcli-docker`
+  - [x] `tool-definitions`
+  - [ ] Parser plugins and other remaining Fortify repositories
+    (including `fortify-ssc-parser-faa`, `fortify-ssc-parser-sarif`, and
+    `fortify-ssc-parser-util`)
+- [x] **Step 6 — Remove now-unused workflows/actions from `.github`**
+  - [x] Moved workflow/action copies are no longer present in the `.github`
+    repository
+  - [x] `shared-doc-resources` is resources-only and has no root workflows
+  - [ ] Migrate remaining consumer repositories before deleting their old
+    `shared-doc-resources`/`.github` references
 
 ## Target repo & layout
 
@@ -107,7 +118,10 @@ every shared CI building block it uses.
 
 ## Problem statement
 
-Consumer workflows (e.g. `fcli`) reference two different repos at `@main`:
+Historically, consumer workflows (e.g. `fcli`) referenced two different repos
+at `@main`; the initial migration has moved `fcli`, `fcli-docker`, and
+`tool-definitions` to pinned `shared-github` references. Remaining consumers
+still need migration:
 
 - `fortify/3rdparty-actions/actions/<owner>-<repo>/v<major>@main` — generated
   wrapper actions around allowed 3rd-party actions.
@@ -115,9 +129,10 @@ Consumer workflows (e.g. `fcli`) reference two different repos at `@main`:
   `fortify/.github/.github/actions/update-tag@main` — hand-written reusable
   workflows/actions.
 
-Both repos are trusted at `@main`, a mutable ref. Today, `generate-composites.yml`
-pushes generated changes to `3rdparty-actions` `main` directly, with no review
-step. That means:
+The remaining old references are mutable and need to be replaced with pinned
+SHAs. The generator now opens a reviewed PR rather than pushing generated
+changes directly, and consumer pin checks produce a separate patch for human
+application. The original risk being addressed was:
 
 - Write access (or a compromised `GH_APP_ID`/`GH_APP_PRIVATE_KEY` secret, or a
   compromised `generate.js` dependency) on `3rdparty-actions` translates
@@ -140,8 +155,9 @@ step. That means:
    **one** commit SHA for all shared CI building blocks.
 3. Keep the "admin updates the org allow-list → wrappers update automatically"
    experience, just gated by review instead of being instant.
-4. Keep changes low-maintenance: consumers should not need to hand-edit SHAs;
-   bumps should arrive as a bot-authored PR they merge.
+4. Keep changes low-maintenance: consumers should not need to calculate SHAs;
+  bump checks should produce a small, reviewable patch that a maintainer can
+  apply and merge. Fully automatic PR creation remains a future option.
 
 ## Target process overview
 
@@ -154,7 +170,7 @@ sequenceDiagram
     actor Reviewer as CODEOWNERS reviewer
     participant Main as shared-github main
     participant Bump as reusable-bump-shared-pin.yml<br/>(reusable workflow)
-    participant ConsumerPR as PR in consumer repo (e.g. fcli)
+    participant ConsumerPR as consumer change in repo (e.g. fcli)
     actor ConsumerReviewer as Consumer repo reviewer
     participant ConsumerMain as consumer main
 
@@ -165,39 +181,32 @@ sequenceDiagram
     Gen->>SharedPR: Open PR (branch, not push to main)
     Reviewer->>SharedPR: Review diff, approve, merge
     SharedPR->>Main: Merge commit lands on main (new SHA)
-    Bump->>Main: Scheduled/dispatch check for new SHA (per consumer)
-    Bump->>ConsumerPR: Open "bump shared-github pin" PR in consumer repo
-    ConsumerReviewer->>ConsumerPR: Review, approve, merge
-    ConsumerPR->>ConsumerMain: Consumer workflows now use new SHA
+    Bump->>Main: Push/schedule/dispatch check for new SHA (per consumer)
+    Bump->>ConsumerPR: Print patch and fail the consumer workflow
+    ConsumerReviewer->>ConsumerPR: Apply patch, review, and open PR
+    ConsumerPR->>ConsumerMain: Consumer workflow pins use new SHA after merge
 ```
 
-Key property: **two independent human-reviewed merges** stand between "admin
-changes the allow-list" and "a consumer workflow executes new shared code" —
-one in the shared repo, one in the consumer repo. Both are normal PR reviews,
-so the process stays fully within existing GitHub workflows (no new tooling
-for reviewers to learn).
+Key property: the generated wrapper change is reviewed in `shared-github`
+before it reaches `main`. Consumer pin checks then detect the new commit and
+produce a separate, human-applied patch because the default `GITHUB_TOKEN`
+cannot modify files under `.github/workflows/`. A future central dispatcher can
+trigger those checks through the existing `repository_dispatch` trigger.
 
 ### Authentication model (kept intentionally minimal)
 
-Only **one** GitHub App is needed, installed on the org, used **exclusively**
-to read `GET /orgs/{org}/actions/permissions/selected-actions` (an org-admin-level
-read that `GITHUB_TOKEN` can never do). Every PR — both the generator's PR in
-`shared-github` and each consumer's pin-bump PR — is opened with that job's
-ordinary `GITHUB_TOKEN`, granted `contents: write` + `pull-requests: write` via
-the workflow's `permissions:` block. No per-consumer App installation or extra
-repo secret is required: the bump workflow runs via `workflow_call` *inside*
-each consumer repo's own workflow, so its `GITHUB_TOKEN` is already scoped to
-that repo.
+Only **one** GitHub App is needed for the current generator, installed on the
+org and used **exclusively** to read
+`GET /orgs/{org}/actions/permissions/selected-actions` (an org-admin-level read
+that `GITHUB_TOKEN` cannot do). The generator's PR uses its job's ordinary
+`GITHUB_TOKEN`. Consumer bump workflows are currently read-only and produce
+patches; no per-consumer write App or extra secret is required.
 
-Caveat: a PR opened with `GITHUB_TOKEN` does not trigger other
-`pull_request`-triggered workflows (GitHub's anti-recursion rule for the
-default token). Required **reviews** on the PR are unaffected (branch
-protection enforces those regardless of who opened the PR), but a required
-**status check** implemented as a separate `pull_request`-triggered workflow
-won't fire on the bot's own PR. The scoped-diff validation below is therefore
-run as part of the generator job itself (failing the job, and so never even
-pushing a branch, if the diff is out of scope) rather than as a separate
-required check — see "Scoped generator diff" for the concrete implementation.
+Caveat: `GITHUB_TOKEN` cannot push changes to files under `.github/workflows/`.
+That is why consumer pinning currently stops at a copy/pasteable patch and
+fails visibly rather than opening a PR. If full automation is later required,
+use a narrowly installed GitHub App with workflow-file write permission, with
+branch protection and no ruleset bypass.
 
 ## Required changes in the shared repo (`shared-github`)
 
@@ -320,6 +329,59 @@ the generator process is structurally incapable of touching
 holds a token capable of pushing or opening a PR in the first place (that
 token only exists in the separate `open-pr` job).
 
+## Allow-list update proposals
+
+### Current behavior
+
+`generate.js` currently consumes the org allow-list as authoritative. It
+resolves non-SHA refs and emits `WARNINGS.md`/workflow annotations, but it does
+not compare an already-allowed SHA with a newer release in the same major
+version. Therefore, when the allow-list remains unchanged, the generator has
+no generated diff and no PR is opened. This is intentional for the current
+implementation but means administrators must update the org allow-list before
+the wrapper generator can adopt a newer upstream action commit.
+
+### Proposed behavior
+
+Add an explicit **allow-list update proposal** pass to `generate.js`:
+
+1. For each allow-listed `owner/repo@<sha>`, resolve the commit's associated
+   release tag where possible and determine the latest release tag in the same
+   major version. Do not cross a major-version boundary.
+2. Compare the allow-listed SHA with the commit SHA behind that latest tag.
+3. For every newer candidate, write a machine-readable proposal containing:
+   `owner/repo`, current allow-list SHA, current tag (if known), proposed tag,
+   proposed SHA, and the exact allow-list replacement line:
+   `owner/repo@<current-sha>` → `owner/repo@<proposed-sha>`.
+4. Keep the generated wrapper update and proposal report together in the
+   generator artifact/PR. The PR description must include a literal replacement
+   list and explicitly state:
+   **the corresponding entries in GitHub organization Actions settings must be
+   updated at the same time as this PR is merged**.
+5. If there are proposals but no wrapper diff, still create a PR containing
+   only the proposal report so the required organization-setting change is
+   reviewed and tracked. The report must not be committed outside the allowed
+   generator scope without updating the scope policy; preferably place it in a
+   dedicated generated path such as `actions/3rdparty/.metadata/` or pass it
+   between jobs as a PR-body artifact.
+
+### Safety and operational rules
+
+- The generator must never silently change the effective upstream SHA merely
+  because a newer tag exists; the org allow-list remains authoritative until
+  an administrator updates it.
+- A proposal is advisory and must not be treated as permission to execute the
+  proposed action before the org setting is updated.
+- Handle repositories with no tags, moving tags, non-semver tags, API failures,
+  and commits whose tag association cannot be determined by reporting an
+  explicit unresolved status rather than guessing.
+- Use a deterministic ordering and stable report format so repeated daily runs
+  do not create noisy PRs.
+- The PR-generation job should include the proposal text but must not execute
+  arbitrary generated content with write permissions.
+- The workflow should avoid creating duplicate open proposal PRs for the same
+  current/proposed SHA pair.
+
 ### 3. Branch protection on `main`
 
 Implemented as a repository ruleset named **`protect-main`** (GitHub Settings →
@@ -383,90 +445,29 @@ Add a notification (Slack webhook or similar) on:
 - Any merged PR (normal signal, lower urgency, but gives visibility into
   cadence/reviewer diligence).
 
-## New reusable workflow: pin bump for consumer repos
+## Reusable workflow: pin check and patch generation
 
-Add `.github/workflows/reusable-bump-shared-pin.yml` in `shared-github`, callable via
-`workflow_call`, that:
+`.github/workflows/reusable-bump-shared-pin.yml` is callable via
+`workflow_call`. It resolves the latest `shared-github/main` SHA, replaces
+already-pinned `fortify/shared-github/...@<sha>` references in the consumer's
+workflow files, and compares the resulting tree with `git diff`.
 
-1. Resolves `shared-github`'s current `main` SHA.
-2. Opens a PR in the **consumer repo** that updates all
-   `fortify/shared-github/...@<sha>` references (across `actions/3rdparty/**`,
-   `actions/fortify/**`, and `.github/workflows/**` paths alike) to that new
-   SHA.
-3. Uses a search/replace across `.github/workflows/**/*.yml` for the pattern
-   `fortify/shared-github/` followed by a 40-hex-char SHA — this is what makes
-   "one commit SHA, one bump PR" possible even though the shared repo has many
-   independent paths and workflow files.
+When changes are needed, it writes a copy/pasteable diff and application
+commands to the job summary, then fails. It does **not** push or open a PR:
+GitHub's default `GITHUB_TOKEN` cannot modify files under `.github/workflows/`,
+and the workflow deliberately avoids a broader App/PAT credential for now.
+The human applies the displayed patch and opens the consumer PR.
 
-```yaml
-name: Bump shared-github pin
-
-on:
-  workflow_call:
-    inputs:
-      shared-repo:
-        type: string
-        default: fortify/shared-github
-
-jobs:
-  bump:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Resolve latest shared-github main SHA
-        id: latest
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          sha=$(gh api "repos/${{ inputs.shared-repo }}/commits/main" --jq .sha)
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-
-      - name: Update pinned SHA references
-        id: update
-        run: |
-          repo="${{ inputs.shared-repo }}"
-          new_sha="${{ steps.latest.outputs.sha }}"
-          changed=0
-          while IFS= read -r -d '' f; do
-            if grep -qE "${repo}/[^@]+@[0-9a-f]{40}" "$f"; then
-              sed -i -E "s#(${repo}/[^@[:space:]]+@)[0-9a-f]{40}#\1${new_sha}#g" "$f"
-              changed=1
-            fi
-          done < <(find .github/workflows -name '*.yml' -print0)
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
-
-      - name: Open pull request
-        if: steps.update.outputs.changed == '1'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -b "chore/bump-shared-github-${{ steps.latest.outputs.sha }}"
-          git commit -am "chore: bump shared-github pin to ${{ steps.latest.outputs.sha }}"
-          git push origin HEAD
-          gh pr create \
-            --title "chore: bump shared-github pin to ${{ steps.latest.outputs.sha }}" \
-            --body "Updates all fortify/shared-github references to the latest reviewed commit on main." \
-            --base main
-```
-
-`GITHUB_TOKEN` here is the *caller* (consumer repo's) token — since this
-workflow runs via `workflow_call` from inside the consumer's own workflow, the
-token is already scoped to that repo; no secret needs to be passed in at all.
-
-(Illustrative — exact SHA/regex handling needs testing, and inputs should also
-cover the old `fortify/3rdparty-actions` / `fortify/.github` prefixes during
-the migration window until all references move to the consolidated repo.)
+The workflow only updates references already pinned to a 40-character commit
+SHA. It deliberately leaves `@main`, tags, and branch refs untouched; initial
+consumer migration to SHA-pinned `shared-github` references is a one-time
+manual change.
 
 ## Consumer repo workflow
 
-Each consumer repo (e.g. `fcli`) adds a small workflow that calls the reusable
-bump workflow on a schedule:
+Each migrated consumer repo adds a small workflow that calls the reusable bump
+workflow. Current consumers use daily, manual, push, and future central
+`repository_dispatch` triggers:
 
 ```yaml
 # .github/workflows/bump-shared-github.yml
@@ -474,12 +475,14 @@ name: Bump shared-github pin
 
 on:
   schedule:
-    - cron: '0 6 * * 1'   # weekly
-  workflow_dispatch: {}
+    - cron: '0 6 * * *'   # daily
+  workflow_dispatch:
+  push:
+  repository_dispatch:
+    types: [shared-github-updated]
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   bump:
@@ -490,16 +493,18 @@ Notes:
 - The `uses:` line for the reusable workflow itself is pinned to a SHA, not
   `@main` — bootstrapping trust: the very first adoption is pinned by hand,
   after which the bot's own PRs keep it current, same as any other reference.
-- No repo secret is needed: the caller workflow's `permissions:` block grants
-  its own `GITHUB_TOKEN` `contents: write` + `pull-requests: write`, which is
-  passed through to the called reusable workflow automatically.
-- The resulting bump PR still requires normal review/merge in the consumer
-  repo per its existing branch protection — no special-casing needed.
+- The workflow is read-only and produces a patch rather than a PR. This avoids
+  requiring a GitHub App with `Workflows: write` permission in every consumer.
+- A central dispatcher can later send `repository_dispatch` with type
+  `shared-github-updated`; no consumer workflow-file change is needed for that
+  future fan-out mechanism.
 
 ## Migration of existing references
 
-Once `shared-github` exists with its final layout, update consumers (starting
-with `fcli`, which currently has the most references):
+Initial migration is complete for `fcli`, `fcli-docker`, and
+`tool-definitions`. Remaining migration includes the parser plugin repositories
+and other Fortify repositories that still reference the old repositories or
+mutable refs. The target mappings are:
 
 - `fortify/.github/.github/workflows/check-duplicate-run.yml@main` →
   `fortify/shared-github/.github/workflows/reusable-check-duplicate-run.yml@<sha>`
@@ -510,50 +515,42 @@ with `fcli`, which currently has the most references):
 - `fortify/3rdparty-actions/actions/<owner>/<repo>/v<major>@main` →
   `fortify/shared-github/actions/3rdparty/<owner>/<repo>/v<major>@<sha>`
 
-All four collapse to the same SHA once consolidated, so future bumps touch one
-value across the whole workflow file.
+All shared-github references in a migrated consumer use the same commit SHA;
+future checks therefore produce one patch covering that consumer's shared
+workflow/action references.
 
-## Sequencing
+## Sequencing and remaining work
 
-Start with the rename and directory move — it's a low-risk, purely structural
-change (existing consumers keep working unchanged via `@main` until the
-migration step later), and gets the target layout in place before layering
-security controls on top of it.
+Completed foundation:
 
-1. **Rename & move first:**
-   - Rename `3rdparty-actions` → `shared-github` (GitHub auto-redirects the
-     old name and old `@main` references keep working during the transition).
-   - Move `actions/<owner>/<repo>/v<major>` → `actions/3rdparty/<owner>/<repo>/v<major>`
-     in the generator output and update `local-generate-composites.yml`/`generate.js`
-     accordingly (output dir, cleanup step, README).
-   - Move `.github/actions/update-tag` (from the `.github` repo) →
-     `actions/fortify/update-tag` in `shared-github`.
-   - Move `.github/workflows/check-duplicate-run.yml` and
-     `.github/workflows/fortify-analysis.yml` (from the `.github` repo) →
-     `shared-github/.github/workflows/reusable-check-duplicate-run.yml` and
-     `shared-github/.github/workflows/reusable-fortify-analysis.yml`
-     (unchanged relative location, since workflows can't move out of
-     `.github/workflows`; renamed with a `reusable-` prefix per the naming
-     convention above).
-   - Do this as a single reviewed PR. No hardening/branch-protection changes
-     yet — just get the structure right.
-2. Harden `shared-github` (branch protection, CODEOWNERS using the new paths,
-   PR-based generator with the `3rdparty/**`-scoped diff check).
-3. Add the `reusable-bump-shared-pin.yml` reusable workflow + validate manually against
-   a fork/test consumer repo.
-4. Roll out the consumer-side `bump-shared-github.yml` workflow to `fcli`
-   first (highest reference count; just adds the workflow file with its
-   `permissions:` block, no new secrets/App to provision), verify the
-   resulting PR looks correct end to end, then roll out to remaining
-   consumers.
-5. Update all `@main` references in `fcli` (and other consumers) to pinned
-   SHAs pointing at `shared-github`'s new paths.
-6. Remove the now-unused workflows/actions from `.github`.
+1. Renamed the repository and established `actions/3rdparty/`,
+  `actions/fortify/`, and the reusable/local workflow naming convention.
+2. Moved the shared actions/workflows and added CODEOWNERS plus the generator's
+  least-privilege two-job design.
+3. Added the read-only patch-based pin checker and migrated `fcli`,
+  `fcli-docker`, and `tool-definitions` to pinned shared-github references.
+4. Removed the old moved workflow/action copies from the `.github` repository.
+
+Remaining work:
+
+1. Set the `protect-main` ruleset to Active/enforced and confirm the actual
+  GitHub App/org allow-list configuration.
+2. Migrate the remaining consumers, especially
+  `fortify-ssc-parser-faa`, `fortify-ssc-parser-sarif`,
+  `fortify-ssc-parser-util`, and other Fortify repositories still using the
+  old shared repositories or mutable refs.
+3. Decide whether to add a central dispatcher that sends
+  `repository_dispatch` type `shared-github-updated` to an explicit list of
+  migrated consumers. The consumer workflows already accept that event.
+4. Decide whether to replace manual patch application with a narrowly scoped
+  GitHub App/PAT that can create branches and modify workflow files. This is
+  intentionally not enabled in the current implementation.
+5. Add alerting for unexpected pushes to `shared-github` `main` and merged
+  shared-code PRs.
 
 ## Open questions
 
 - Whether `main` should block direct pushes for org owners too, or just
   non-admin collaborators (GitHub's "Do not allow bypassing" setting).
-- Cadence for the consumer bump workflow (schedule vs. triggered by a
-  repository_dispatch from the shared repo on merge — the latter is faster
-  but adds coupling; start with schedule + manual `workflow_dispatch`).
+- Whether to implement the central `repository_dispatch` fan-out, and which
+  repositories should be explicitly opted in.
